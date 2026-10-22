@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { formatDailyWeekday, formatHourlyTime, forecastParams, placeLabel, weatherDescription } from './weather-utils'
+import { canSearchLocation, formatDailyWeekday, formatHourlyTime, forecastParams, placeLabel, weatherDescription, weatherIconKind } from './weather-utils'
 import type { Place } from './weather-utils'
 
 const zagreb: Place = { id: 1, name: 'Zagreb', admin1: 'City of Zagreb', country: 'Croatia', latitude: 45.81, longitude: 15.98, timezone: 'Europe/Zagreb' }
 
 describe('weather display helpers', () => {
+  it('waits for at least three trimmed characters before searching', () => {
+    expect(canSearchLocation('  ab')).toBe(false)
+    expect(canSearchLocation('  abc ')).toBe(true)
+  })
+
+  it('maps Open-Meteo weather codes to icon groups', () => {
+    expect(weatherIconKind(0)).toBe('sun')
+    expect(weatherIconKind(2)).toBe('partly-cloudy')
+    expect(weatherIconKind(45)).toBe('fog')
+    expect(weatherIconKind(61)).toBe('rain')
+    expect(weatherIconKind(73)).toBe('snow')
+    expect(weatherIconKind(95)).toBe('thunder')
+    expect(weatherIconKind(-1)).toBe('unknown')
+  })
+
   it('maps Open-Meteo weather codes to plain-language conditions', () => {
     expect(weatherDescription(0)).toBe('Clear sky')
     expect(weatherDescription(3)).toBe('Overcast')

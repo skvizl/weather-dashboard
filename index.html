@@ -3,8 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f4f5f3" />
+    <meta name="theme-color" content="#f1f7fc" />
     <meta name="description" content="A simple weather forecast for your saved locations." />
+    <script>
+      try {
+        const savedTheme = localStorage.getItem('weather-dashboard.theme')
+        document.documentElement.dataset.theme = savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : 'system'
+      } catch {
+        document.documentElement.dataset.theme = 'system'
+      }
+    </script>
     <title>Weather Dashboard</title>
   </head>
   <body>
