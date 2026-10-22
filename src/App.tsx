@@ -1,0 +1,171 @@
+import { useEffect, useMemo, useState } from 'react'
+import { formatDailyWeekday, formatHourlyTime, forecastParams, placeLabel, weatherDescription } from './weather-utils'
+import type { Place, Units } from './weather-utils'
+import './App.css'
+
+type WeatherPayload = {
+  current: { time: string; temperature_2m: number; weather_code: number; wind_speed_10m: number }
+  hourly: { time: string[]; temperature_2m: number[]; weather_code: number[]; precipitation_probability: number[]; wind_speed_10m: number[] }
+  daily: { time: string[]; weather_code: number[]; temperature_2m_max: number[]; temperature_2m_min: number[]; precipitation_probability_max: number[]; wind_speed_10m_max: number[] }
+  current_units: { temperature_2m: string; wind_speed_10m: string }
+  hourly_units: { temperature_2m: string; wind_speed_10m: string }
+  daily_units: { temperature_2m_max: string; wind_speed_10m_max: string }
+}
+
+const SAVED_KEY = 'weather-dashboard.saved-locations'
+const LAST_KEY = 'weather-dashboard.last-location'
+const UNITS_KEY = 'weather-dashboard.units'
+
+function readSaved(): Place[] {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) ?? '[]') as Place[] } catch { return [] }
+}
+
+function App() {
+  const [saved, setSaved] = useState<Place[]>(readSaved)
+  const [selected, setSelected] = useState<Place | null>(() => {
+    try { return JSON.parse(localStorage.getItem(LAST_KEY) ?? 'null') as Place | null } catch { return null }
+  })
+  const [units, setUnits] = useState<Units>(() => localStorage.getItem(UNITS_KEY) === 'imperial' ? 'imperial' : 'metric')
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<Place[]>([])
+  const [weather, setWeather] = useState<WeatherPayload | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [searchError, setSearchError] = useState('')
+
+  useEffect(() => { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)) }, [saved])
+  useEffect(() => { localStorage.setItem(UNITS_KEY, units) }, [units])
+  useEffect(() => {
+    if (selected) localStorage.setItem(LAST_KEY, JSON.stringify(selected))
+  }, [selected])
+
+  useEffect(() => {
+    if (!selected) return
+    const controller = new AbortController()
+    const params = forecastParams(selected, units)
+    setLoading(true)
+    setError('')
+    fetch(`https://api.open-meteo.com/v1/forecast?${params}`, { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error('Weather data is temporarily unavailable. Please try again.')
+        return response.json() as Promise<WeatherPayload>
+      })
+      .then(setWeather)
+      .catch((reason: unknown) => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return
+        setWeather(null)
+        setError(reason instanceof Error ? reason.message : 'Could not load weather data.')
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [selected, units])
+
+  async function searchLocations(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const term = query.trim()
+    if (term.length < 2) { setSearchError('Enter at least two characters.'); return }
+    setSearching(true); setSearchError(''); setResults([])
+    try {
+      const params = new URLSearchParams({ name: term, count: '10', language: 'en', format: 'json' })
+      const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params}`)
+      if (!response.ok) throw new Error('Location search is temporarily unavailable.')
+      const data = await response.json() as { results?: Place[] }
+      setResults(data.results ?? [])
+      if (!data.results?.length) setSearchError('No matching places found. Try adding a country or region.')
+    } catch (reason) {
+      setSearchError(reason instanceof Error ? reason.message : 'Could not search for that location.')
+    } finally { setSearching(false) }
+  }
+
+  function choosePlace(place: Place) {
+    setSelected(place); setResults([]); setQuery(''); setSearchError('')
+  }
+
+  function toggleSaved(place: Place) {
+    setSaved(current => current.some(item => item.id === place.id)
+      ? current.filter(item => item.id !== place.id)
+      : [...current, place])
+  }
+
+  const hourly = useMemo(() => {
+    if (!weather) return []
+    const currentIndex = weather.hourly.time.findIndex(time => time >= weather.current.time)
+    const start = Math.max(0, currentIndex)
+    return weather.hourly.time.slice(start, start + 24).map((time, offset) => {
+      const index = start + offset
+      return { time, temperature: weather.hourly.temperature_2m[index], code: weather.hourly.weather_code[index], rain: weather.hourly.precipitation_probability[index], wind: weather.hourly.wind_speed_10m[index] }
+    })
+  }, [weather])
+
+  const isSaved = selected ? saved.some(item => item.id === selected.id) : false
+  const windUnit = units === 'metric' ? 'km/h' : 'mph'
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <a className="brand" href="#home" aria-label="Weather dashboard home">Weather</a>
+        <div className="top-actions">
+          {saved.length > 0 && <label className="location-picker"><span className="sr-only">Saved locations</span><select value={selected?.id ?? ''} onChange={event => { const place = saved.find(item => item.id === Number(event.target.value)); if (place) choosePlace(place) }}><option value="">Saved locations</option>{saved.map(place => <option key={place.id} value={place.id}>{placeLabel(place)}</option>)}</select></label>}
+          <div className="unit-switch" aria-label="Temperature units" role="group"><button className={units === 'metric' ? 'active' : ''} onClick={() => setUnits('metric')} aria-pressed={units === 'metric'}>°C</button><button className={units === 'imperial' ? 'active' : ''} onClick={() => setUnits('imperial')} aria-pressed={units === 'imperial'}>°F</button></div>
+        </div>
+      </header>
+
+      {!selected ? (
+        <section className="welcome-card" id="home">
+          <p className="eyebrow">Local forecast</p><h1>Choose a location</h1><p className="intro">Search for a city or postal code to see its weather.</p>
+          <SearchForm query={query} setQuery={setQuery} onSubmit={searchLocations} searching={searching} error={searchError} />
+          <Results results={results} onChoose={choosePlace} />
+        </section>
+      ) : (
+        <>
+          <section className="location-heading">
+            <div><p className="eyebrow">Your forecast</p><h1>{selected.name}</h1><p className="subheading">{[selected.admin1, selected.country].filter(Boolean).join(', ')}</p></div>
+            <button className="text-button" onClick={() => { setSelected(null); setWeather(null); setSearching(false) }} aria-label="Search for another location">Change location</button>
+          </section>
+          <section className="search-panel" aria-label="Search locations"><SearchForm query={query} setQuery={setQuery} onSubmit={searchLocations} searching={searching} error={searchError} /><Results results={results} onChoose={choosePlace} /></section>
+          {loading && <p className="status-message" role="status">Loading forecast…</p>}
+          {error && <p className="error-message" role="alert">{error}</p>}
+          {weather && !loading && <>
+            <section className="current-card" aria-labelledby="current-title">
+              <div><p className="eyebrow" id="current-title">Current conditions</p><p className="current-condition">{weatherDescription(weather.current.weather_code)}</p><p className="current-wind">Wind {Math.round(weather.current.wind_speed_10m)} {windUnit}</p></div>
+              <div className="current-temperature">{Math.round(weather.current.temperature_2m)}<span>{weather.current_units.temperature_2m}</span></div>
+            </section>
+            <section className="forecast-section" aria-labelledby="hourly-title"><div className="section-heading"><div><p className="eyebrow">Coming up</p><h2 id="hourly-title">Next 24 hours</h2></div></div>
+              <div className="hourly-strip" tabIndex={0} aria-label="Hourly forecast, scroll horizontally for more">
+                {hourly.map(item => <article className="hour-card" key={item.time}><p className="hour-time">{formatHourlyTime(item.time, units)}</p><p className="hour-temp">{Math.round(item.temperature)}{weather.hourly_units.temperature_2m}</p><p className="hour-condition">{weatherDescription(item.code)}</p>{item.rain > 0 && <p className="rain-probability">Rain {item.rain}%</p>}<p className="hour-wind">Wind {Math.round(item.wind)} {windUnit}</p></article>)}
+              </div>
+            </section>
+            <section className="forecast-section" aria-labelledby="daily-title"><div className="section-heading"><div><p className="eyebrow">Plan ahead</p><h2 id="daily-title">7-day forecast</h2></div></div>
+              <div className="daily-list">{weather.daily.time.map((date, index) => <article className="daily-row" key={date}><p className="day-name">{index === 0 ? 'Today' : formatDailyWeekday(date)}</p><p className="day-condition">{weatherDescription(weather.daily.weather_code[index])}{weather.daily.precipitation_probability_max[index] > 0 && <span className="day-rain"> · Rain {weather.daily.precipitation_probability_max[index]}%</span>}</p><p className="day-wind">Wind {Math.round(weather.daily.wind_speed_10m_max[index])} {windUnit}</p><p className="day-temperature"><span>{Math.round(weather.daily.temperature_2m_max[index])}°</span><span className="low">{Math.round(weather.daily.temperature_2m_min[index])}°</span></p></article>)}</div>
+            </section>
+            <footer className="app-footer"><button className="text-button" onClick={() => selected && toggleSaved(selected)}>{isSaved ? 'Remove saved location' : 'Save this location'}</button><p>Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></p></footer>
+          </>}
+        </>
+      )}
+      <footer className="site-footer">Weather forecasts are estimates and may change.</footer>
+    </main>
+  )
+}
+
+function SearchForm({ query, setQuery, onSubmit, searching, error }: { query: string; setQuery: (value: string) => void; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void; searching: boolean; error: string }) {
+  return <><form className="search-form" onSubmit={onSubmit}><label className="sr-only" htmlFor="location-search">Search city or postal code</label><input id="location-search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search city or postal code" autoComplete="off"/><button className="primary-button" type="submit" disabled={searching}>{searching ? 'Searching…' : 'Search'}</button></form>{error && <p className="inline-error" role="status">{error}</p>}</>
+}
+
+function Results({ results, onChoose }: { results: Place[]; onChoose: (place: Place) => void }) {
+  if (!results.length) return null
+  return <ul className="results-list" aria-label="Location search results">{results.map(place => <li key={place.id}><button onClick={() => onChoose(place)}>{placeLabel(place)}<span>Select</span></button></li>)}</ul>
+}
+
+export default App
+
+
+
+
+
+
+
+
+
+
+
