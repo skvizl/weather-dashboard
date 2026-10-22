@@ -45,6 +45,7 @@ function App() {
   const [searchError, setSearchError] = useState('')
   const [showQrCode, setShowQrCode] = useState(false)
   const [qrCode, setQrCode] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)) }, [saved])
   useEffect(() => { localStorage.setItem(UNITS_KEY, units) }, [units])
@@ -52,6 +53,14 @@ function App() {
     document.documentElement.dataset.theme = theme
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+  useEffect(() => {
+    if (!menuOpen) return
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [menuOpen])
   useEffect(() => {
     if (selected) localStorage.setItem(LAST_KEY, JSON.stringify(selected))
   }, [selected])
@@ -158,9 +167,12 @@ function App() {
         <a className="brand" href="#home" aria-label="Weather dashboard home">Weather</a>
         <div className="top-actions">
           {saved.length > 0 && <label className="location-picker"><span className="sr-only">Saved locations</span><select value={selected?.id ?? ''} onChange={event => { const place = saved.find(item => item.id === Number(event.target.value)); if (place) choosePlace(place) }}><option value="">Saved locations</option>{saved.map(place => <option key={place.id} value={place.id}>{placeLabel(place)}</option>)}</select></label>}
-          <button className="qr-toggle" type="button" aria-expanded={showQrCode} aria-controls="share-qr" onClick={() => setShowQrCode(open => !open)}>{showQrCode ? 'Hide QR code' : 'Open on phone'}</button>
-          <label className="theme-picker"><span className="sr-only">Appearance</span><select value={theme} onChange={event => setTheme(event.target.value as Theme)} aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-          <div className="unit-switch" aria-label="Temperature units" role="group"><button className={units === 'metric' ? 'active' : ''} onClick={() => changeUnits('metric')} aria-pressed={units === 'metric'}>°C</button><button className={units === 'imperial' ? 'active' : ''} onClick={() => changeUnits('imperial')} aria-pressed={units === 'imperial'}>°F</button></div>
+          <button className="menu-toggle" type="button" aria-label={menuOpen ? 'Close settings menu' : 'Open settings menu'} aria-expanded={menuOpen} aria-controls="header-settings" onClick={() => setMenuOpen(open => !open)}><span className="menu-icon" aria-hidden="true"><span/><span/><span/></span></button>
+          <div className={`settings-controls${menuOpen ? ' is-open' : ''}`} id="header-settings" aria-label="App settings">
+            <button className="qr-toggle" type="button" aria-expanded={showQrCode} aria-controls="share-qr" onClick={() => { setShowQrCode(open => !open); setMenuOpen(false) }}>{showQrCode ? 'Hide QR code' : 'Open on phone'}</button>
+            <label className="theme-picker"><span className="sr-only">Appearance</span><select value={theme} onChange={event => { setTheme(event.target.value as Theme); setMenuOpen(false) }} aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+            <div className="unit-switch" aria-label="Temperature units" role="group"><button className={units === 'metric' ? 'active' : ''} onClick={() => { changeUnits('metric'); setMenuOpen(false) }} aria-pressed={units === 'metric'}>°C</button><button className={units === 'imperial' ? 'active' : ''} onClick={() => { changeUnits('imperial'); setMenuOpen(false) }} aria-pressed={units === 'imperial'}>°F</button></div>
+          </div>
         </div>
       </header>
 
