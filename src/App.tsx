@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import QRCode from 'qrcode'
 import { formatDailyWeekday, formatHourlyTime, forecastParams, placeLabel, weatherDescription } from './weather-utils'
 import type { Place, Units } from './weather-utils'
 import './App.css'
@@ -33,12 +34,23 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [searchError, setSearchError] = useState('')
+  const [showQrCode, setShowQrCode] = useState(false)
+  const [qrCode, setQrCode] = useState('')
 
   useEffect(() => { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)) }, [saved])
   useEffect(() => { localStorage.setItem(UNITS_KEY, units) }, [units])
   useEffect(() => {
     if (selected) localStorage.setItem(LAST_KEY, JSON.stringify(selected))
   }, [selected])
+
+  useEffect(() => {
+    if (!showQrCode) return
+    let active = true
+    QRCode.toDataURL(window.location.href, { width: 220, margin: 2, errorCorrectionLevel: 'M' })
+      .then(dataUrl => { if (active) setQrCode(dataUrl) })
+      .catch(() => { if (active) setQrCode('') })
+    return () => { active = false }
+  }, [showQrCode])
 
   useEffect(() => {
     if (!selected) return
@@ -107,9 +119,15 @@ function App() {
         <a className="brand" href="#home" aria-label="Weather dashboard home">Weather</a>
         <div className="top-actions">
           {saved.length > 0 && <label className="location-picker"><span className="sr-only">Saved locations</span><select value={selected?.id ?? ''} onChange={event => { const place = saved.find(item => item.id === Number(event.target.value)); if (place) choosePlace(place) }}><option value="">Saved locations</option>{saved.map(place => <option key={place.id} value={place.id}>{placeLabel(place)}</option>)}</select></label>}
+          <button className="qr-toggle" type="button" aria-expanded={showQrCode} aria-controls="share-qr" onClick={() => setShowQrCode(open => !open)}>{showQrCode ? 'Hide QR code' : 'Open on phone'}</button>
           <div className="unit-switch" aria-label="Temperature units" role="group"><button className={units === 'metric' ? 'active' : ''} onClick={() => setUnits('metric')} aria-pressed={units === 'metric'}>°C</button><button className={units === 'imperial' ? 'active' : ''} onClick={() => setUnits('imperial')} aria-pressed={units === 'imperial'}>°F</button></div>
         </div>
       </header>
+
+      {showQrCode && <section className="qr-panel" id="share-qr" aria-label="Open this app on your phone">
+        <div><h2>Open this app on your phone</h2><p>Scan this code with your phone camera.</p><p className="qr-url">{window.location.href}</p></div>
+        {qrCode ? <img src={qrCode} width="176" height="176" alt="QR code for this app address" /> : <p className="qr-status" role="status">Creating QR code…</p>}
+      </section>}
 
       {!selected ? (
         <section className="welcome-card" id="home">
