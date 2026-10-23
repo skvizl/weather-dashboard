@@ -25,6 +25,7 @@ export type Place = {
   country?: string
   admin1?: string
   timezone?: string
+  source?: 'ip'
 }
 
 export function weatherDescription(code: number): string {
@@ -68,5 +69,6 @@ export function formatHourlyTime(time: string, units: Units): string {
 export function formatDailyWeekday(date: string): string {
   return new Intl.DateTimeFormat(undefined, { weekday: 'short', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
 }
+
 
 

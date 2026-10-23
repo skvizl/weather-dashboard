@@ -14,6 +14,7 @@ type WeatherPayload = {
   daily_units: { temperature_2m_max: string; wind_speed_10m_max: string }
 }
 type Theme = 'system' | 'light' | 'dark'
+type ChartMetric = 'rain' | 'wind'
 
 const SAVED_KEY = 'weather-dashboard.saved-locations'
 const LAST_KEY = 'weather-dashboard.last-location'
@@ -46,6 +47,10 @@ function App() {
   const [showQrCode, setShowQrCode] = useState(false)
   const [qrCode, setQrCode] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [gettingLocation, setGettingLocation] = useState(false)
+  const [locationError, setLocationError] = useState('')
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [chartMetric, setChartMetric] = useState<ChartMetric>('rain')
 
   useEffect(() => { localStorage.setItem(SAVED_KEY, JSON.stringify(saved)) }, [saved])
   useEffect(() => { localStorage.setItem(UNITS_KEY, units) }, [units])
@@ -134,8 +139,29 @@ function App() {
   }
 
   function choosePlace(place: Place) {
+    setSelectedDate(null)
     if (selected?.id === place.id) { updateQuery(''); return }
     setSelected(place); setLoading(true); setError(''); updateQuery('')
+  }
+
+  function useCurrentLocation() {
+    setLocationError('')
+    setGettingLocation(true)
+    fetch('/api/location')
+      .then(async response => {
+        const data = await response.json().catch(() => ({})) as { place?: Place; error?: string }
+        if (!response.ok || !data.place) {
+          throw new Error(data.error || 'Approximate location is unavailable here. Search for a city instead.')
+        }
+        return data.place
+      })
+      .then(place => {
+        choosePlace(place)
+      })
+      .catch((reason: unknown) => {
+        setLocationError(reason instanceof Error ? reason.message : 'Could not estimate your location. Search for a city instead.')
+      })
+      .finally(() => setGettingLocation(false))
   }
 
   function changeUnits(value: Units) {
@@ -184,16 +210,17 @@ function App() {
       {!selected ? (
         <section className="welcome-card" id="home">
           <p className="eyebrow">Local forecast</p><h1>Choose a location</h1><p className="intro">Search for a city or postal code to see its weather.</p>
+          <CurrentLocationAction onClick={useCurrentLocation} loading={gettingLocation} error={locationError} />
           <SearchForm query={query} setQuery={updateQuery} searching={searching} error={searchError} resultCount={results.length} />
           <Results results={results} onChoose={choosePlace} />
         </section>
       ) : (
         <>
           <section className="location-heading">
-            <div><p className="eyebrow">Your forecast</p><h1>{selected.name}</h1><p className="subheading">{[selected.admin1, selected.country].filter(Boolean).join(', ')}</p></div>
+            <div><p className="eyebrow">Your forecast</p><h1>{selected.name}</h1><p className="subheading">{[selected.admin1, selected.country].filter(Boolean).join(', ')}</p>{selected.source === 'ip' && <p className="location-note">Approximate location based on your internet connection.</p>}</div>
             <button className="text-button" onClick={() => { setSelected(null); setWeather(null); setSearching(false) }} aria-label="Search for another location">Change location</button>
           </section>
-          <section className="search-panel" aria-label="Search locations"><SearchForm query={query} setQuery={updateQuery} searching={searching} error={searchError} resultCount={results.length} /><Results results={results} onChoose={choosePlace} /></section>
+          <section className="search-panel" aria-label="Search locations"><CurrentLocationAction onClick={useCurrentLocation} loading={gettingLocation} error={locationError} /><SearchForm query={query} setQuery={updateQuery} searching={searching} error={searchError} resultCount={results.length} /><Results results={results} onChoose={choosePlace} /></section>
           {loading && <p className="status-message" role="status">Loading forecast…</p>}
           {error && <p className="error-message" role="alert">{error}</p>}
           {weather && !loading && <>
@@ -207,7 +234,20 @@ function App() {
               </div>
             </section>
             <section className="forecast-section" aria-labelledby="daily-title"><div className="section-heading"><div><p className="eyebrow">Plan ahead</p><h2 id="daily-title">7-day forecast</h2></div></div>
-              <div className="daily-list">{weather.daily.time.map((date, index) => <article className="daily-row" key={date}><p className="day-name">{index === 0 ? 'Today' : formatDailyWeekday(date)}</p><div className="day-condition"><WeatherIcon code={weather.daily.weather_code[index]} size={30} />{weather.daily.precipitation_probability_max[index] > 0 && <span className="day-rain">Rain {weather.daily.precipitation_probability_max[index]}%</span>}</div><p className="day-wind">Wind {Math.round(weather.daily.wind_speed_10m_max[index])} {windUnit}</p><p className="day-temperature"><span>{Math.round(weather.daily.temperature_2m_max[index])}°</span><span className="low">{Math.round(weather.daily.temperature_2m_min[index])}°</span></p></article>)}</div>
+              <div className="daily-list">{weather.daily.time.map((date, index) => {
+                const daySelected = date === selectedDate
+                const currentDate = weather.current.time.slice(0, 10)
+                const dayHours = daySelected ? weather.hourly.time.flatMap((time, hourIndex) => {
+                  if (time.slice(0, 10) !== date || (date === currentDate && time < weather.current.time)) return []
+                  return [{ time, temperature: weather.hourly.temperature_2m[hourIndex], code: weather.hourly.weather_code[hourIndex], rain: weather.hourly.precipitation_probability[hourIndex], wind: weather.hourly.wind_speed_10m[hourIndex] }]
+                }) : []
+                return <div className="daily-entry" key={date}>
+                  <button className="daily-row" type="button" aria-expanded={daySelected} aria-controls={`day-detail-${date}`} onClick={() => setSelectedDate(daySelected ? null : date)}>
+                    <span className="day-name">{index === 0 ? 'Today' : formatDailyWeekday(date)}</span><span className="day-condition"><WeatherIcon code={weather.daily.weather_code[index]} size={30} />{weather.daily.precipitation_probability_max[index] > 0 && <span className="day-rain">Rain {weather.daily.precipitation_probability_max[index]}%</span>}</span><span className="day-wind">Wind {Math.round(weather.daily.wind_speed_10m_max[index])} {windUnit}</span><span className="day-temperature"><span>{Math.round(weather.daily.temperature_2m_max[index])}°</span><span className="low">{Math.round(weather.daily.temperature_2m_min[index])}°</span></span>
+                  </button>
+                  {daySelected && <DayDetail id={`day-detail-${date}`} date={date} hours={dayHours} units={units} windUnit={windUnit} metric={chartMetric} setMetric={setChartMetric} />}
+                </div>
+              })}</div>
             </section>
             <footer className="app-footer"><button className="text-button" onClick={() => selected && toggleSaved(selected)}>{isSaved ? 'Remove saved location' : 'Save this location'}</button><p>Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></p></footer>
           </>}
@@ -216,6 +256,54 @@ function App() {
       <footer className="site-footer">Weather forecasts are estimates and may change.</footer>
     </main>
   )
+}
+
+function CurrentLocationAction({ onClick, loading, error }: { onClick: () => void; loading: boolean; error: string }) {
+  return <div className="current-location-action">
+    <button className="location-action-button" type="button" onClick={onClick} disabled={loading}>{loading ? 'Finding your location…' : 'Use my current location'}</button>
+    {error && <p className="location-action-error" role="alert">{error}</p>}
+  </div>
+}
+
+type DayHour = { time: string; temperature: number; code: number; rain: number; wind: number }
+
+function DayDetail({ id, date, hours, units, windUnit, metric, setMetric }: { id: string; date: string; hours: DayHour[]; units: Units; windUnit: string; metric: ChartMetric; setMetric: (metric: ChartMetric) => void }) {
+  const maxWind = Math.max(1, ...hours.map(hour => hour.wind))
+  const chartMax = metric === 'rain' ? 100 : Math.ceil(maxWind / 5) * 5
+  const chartUnit = metric === 'rain' ? '%' : windUnit
+  const dateLabel = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
+
+  return <section className="day-detail" id={id} aria-label={`Detailed forecast for ${dateLabel}`}>
+    <h3>{dateLabel}</h3>
+    <div className="day-detail-heading"><h4>Hourly forecast</h4><div className="chart-toggle" role="group" aria-label="Choose chart data">
+      <button type="button" aria-pressed={metric === 'rain'} onClick={() => setMetric('rain')}>Rain chance</button>
+      <button type="button" aria-pressed={metric === 'wind'} onClick={() => setMetric('wind')}>Wind speed</button>
+    </div></div>
+    {hours.length ? <>
+      <div className="detail-hourly-strip" aria-label={`Hourly forecast for ${dateLabel}`}>
+        {hours.map(hour => <article className="detail-hour" key={hour.time}>
+          <p>{formatHourlyTime(hour.time, units)}</p><WeatherIcon code={hour.code} size={28} /><strong>{Math.round(hour.temperature)}°</strong>
+          {hour.rain > 0 && <span>Rain {Math.round(hour.rain)}%</span>}<span>Wind {Math.round(hour.wind)} {windUnit}</span>
+        </article>)}
+      </div>
+      <div className="chart-heading"><p>{metric === 'rain' ? 'Chance of rain' : 'Wind speed'}</p><span>{chartUnit}</span></div>
+      <div className="forecast-chart" role="img" aria-label={`Hourly ${metric === 'rain' ? 'rain chance' : 'wind speed'} chart for ${dateLabel}`}>
+        <div className="chart-axis" aria-hidden="true"><span>{chartMax}{chartUnit}</span><span>{Math.round(chartMax / 2)}{chartUnit}</span><span>0</span></div>
+        <div className="chart-scroll"><div className="chart-columns">
+          {hours.map((hour, index) => {
+            const value = metric === 'rain' ? hour.rain : hour.wind
+            const barHeight = chartMax ? Math.min(100, Math.max(0, value / chartMax * 100)) : 0
+            const valueLabel = metric === 'rain' ? `${Math.round(value)}%` : `${Math.round(value)} ${windUnit}`
+            return <div className="chart-column" key={hour.time} title={`${formatHourlyTime(hour.time, units)} · ${valueLabel}`}>
+              <span className="chart-bar-space"><span className={`chart-bar ${metric === 'wind' ? 'wind' : ''}`} style={{ height: `${barHeight}%` }} /></span>
+              <span className="chart-time">{index % 3 === 0 || index === hours.length - 1 ? formatHourlyTime(hour.time, units) : ''}</span>
+            </div>
+          })}
+        </div></div>
+      </div>
+      <ul className="sr-only">{hours.map(hour => <li key={hour.time}>{formatHourlyTime(hour.time, units)}: {metric === 'rain' ? `rain chance ${Math.round(hour.rain)} percent` : `wind speed ${Math.round(hour.wind)} ${windUnit}`}</li>)}</ul>
+    </> : <p className="status-message">No hourly forecast is available for this day.</p>}
+  </section>
 }
 
 function SearchForm({ query, setQuery, searching, error, resultCount }: { query: string; setQuery: (value: string) => void; searching: boolean; error: string; resultCount: number }) {
@@ -229,6 +317,7 @@ function Results({ results, onChoose }: { results: Place[]; onChoose: (place: Pl
 }
 
 export default App
+
 
 
 
